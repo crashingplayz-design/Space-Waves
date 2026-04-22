@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Space Waves – Worlds</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui,sans-serif}
+body{
+  background:radial-gradient(circle at top,#1b1b3a 0,#050510 60%,#000 100%);
+  color:#fff;display:flex;justify-content:center;align-items:center;
+  height:100vh;overflow:hidden
+}
+canvas{
+  background:#000;border-radius:14px;box-shadow:0 0 35px #0ff6
+}
+#menu,#gameOverMenu,#shop{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  justify-content:center;align-items:center;gap:20px;
+  background:rgba(0,0,0,0.7);backdrop-filter:blur(6px);text-align:center
+}
+#menu{background:rgba(0,0,0,0.65);animation:fadeIn .6s ease}
+#menu h1{
+  font-size:52px;letter-spacing:4px;
+  text-shadow:0 0 20px #0ff,0 0 40px #0ff8;
+  animation:pulse 2s infinite ease-in-out
+}
+#gameOverMenu,#shop{display:none}
+#gameOverMenu h1{
+  font-size:40px;letter-spacing:3px;
+  text-shadow:0 0 18px #0ff;
+  animation:holo 1.4s infinite alternate
+}
+.btn{
+  padding:12px 28px;background:#0ff2;border:2px solid #0ff;
+  border-radius:10px;cursor:pointer;font-size:20px;transition:.2s
+}
+.btn:hover{background:#0ff7;transform:scale(1.06)}
+#skins{display:flex;gap:10px}
+.skin{
+  width:32px;height:32px;border-radius:50%;
+  border:2px solid #fff5;cursor:pointer;transition:.2s
+}
+.skin:hover{transform:scale(1.15)}
+.skin.selected{border-color:#fff;box-shadow:0 0 10px #fff}
+#shop h2{margin-top:10px;text-shadow:0 0 10px #0ff}
+.worldBtn{
+  padding:8px 18px;background:#0ff2;border:2px solid #0ff;
+  border-radius:8px;cursor:pointer;margin:4px;font-size:16px;transition:.2s
+}
+.worldBtn:hover{background:#0ff6;transform:scale(1.04)}
+.worldBtn.locked{opacity:.5}
+@keyframes pulse{
+  0%{transform:scale(1)}
+  50%{transform:scale(1.06)}
+  100%{transform:scale(1)}
+}
+@keyframes fadeIn{
+  from{opacity:0}
+  to{opacity:1}
+}
+@keyframes holo{
+  0%{text-shadow:0 0 10px #0ff,0 0 20px #0ff8}
+  100%{text-shadow:0 0 4px #0ff,0 0 10px #0ff4}
+}
+</style>
+</head>
+<body>
+<div id="menu">
+  <h1>SPACE WAVES</h1>
+  <div class="btn" id="playBtn">START</div>
+  <div>Best Score: <span id="bestScoreMenu">0</span></div>
+  <div>Coins: <span id="menuCoins">0</span></div>
+  <div>Choose Your Core:</div>
+  <div id="skins"></div>
+</div>
+
+<div id="gameOverMenu">
+  <h1>DEATH PROTOCOL</h1>
+  <div>Score: <span id="finalScore">0</span></div>
+  <div>Coins: <span id="coinDisplay">0</span></div>
+  <div class="btn" id="retryBtn">RESTART</div>
+  <div class="btn" id="shopBtn">SHOP</div>
+  <div class="btn" id="backToMenuBtn">MAIN MENU</div>
+</div>
+
+<div id="shop">
+  <h1>HYPER SHOP</h1>
+  <div>Coins: <span id="shopCoins">0</span></div>
+  <h2>Worlds</h2>
+  <div id="worldList"></div>
+  <div class="btn" id="closeShopBtn">CLOSE</div>
+</div>
+
+<canvas id="game" width="700" height="400"></canvas>
+
+<script>
+// --- Space Waves Game Logic ---
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+
+let running=false;
+let score=0;
+let bestScore=Number(localStorage.getItem("bestScoreWalls")||0);
+document.getElementById("bestScoreMenu").textContent=bestScore;
+
+let playerY=canvas.height/2;
+let playerVy=0;
+let pressing=false;
+
+const gravity=1.8;
+const thrust=-4.0;
+
+let segments=[];
+let offsetX=0;
+let time=0;
+const segmentWidth=40;
+
+const skinColors=[
+  ["#0ff","#0af"],
+  ["#f0f","#ff0"],
+  ["#0f0","#0ff"],
+  ["#f60","#f00"],
+  ["#ff4d4d","#ff00aa"],
+  ["#00ffaa","#00aaff"]
+];
+let selectedSkin=Number(localStorage.getItem("wallSkin")||0);
+const skinsDiv=document.getElementById("skins");
+skinColors.forEach((c,i)=>{
+  const b=document.createElement("div");
+  b.className="skin";
+  b.style.background=`linear-gradient(135deg,${c[0]},${c[1]})`;
+  if(i===selectedSkin)b.classList.add("selected");
+  b.onclick=()=>{
+    selectedSkin=i;
+    localStorage.setItem("wallSkin",i);
+    document.querySelectorAll(".skin").forEach(s=>s.classList.remove("selected"));
+    b.classList.add("selected");
+  };
+  skinsDiv.appendChild(b);
+});
+
+let coins=Number(localStorage.getItem("coins")||0);
+let world=Number(localStorage.getItem("world")||0);
+document.getElementById("menuCoins").textContent=coins;
+
+// --- Updated worldThemes with cost and multiplier ---
+const worldThemes=[
+  {name:"Classic",color:"#0ff",mode:"2d", cost:0, multiplier:1},
+  {name:"Grid Warp",color:"#ff4b4b",mode:"3d", cost:2000, multiplier:2},
+  {name:"Nebula",color:"#a0f",mode:"2d", cost:5000, multiplier:3},
+  {name:"Toxic",color:"#0f0",mode:"2d", cost:10000, multiplier:5}
+];
+
+let particles=[];
+let flashAlpha=0;
+
+window.addEventListener("mousedown",()=>pressing=true);
+window.addEventListener("mouseup",()=>pressing=false);
+window.addEventListener("touchstart",e=>{pressing=true;e.preventDefault()});
+window.addEventListener("touchend",e=>{pressing=false;e.preventDefault()});
+window.addEventListener("keydown",e=>{
+  if(["Space","KeyW","ArrowUp"].includes(e.code))pressing=true;
+});
+window.addEventListener("keyup",e=>{
+  if(["Space","KeyW","ArrowUp"].includes(e.code))pressing=false;
+});
+
+function generateInitialSegments(){
+  segments=[];
+  let x=0;
+  let centerY=canvas.height/2;
+  let gap=150;
+  while(x<canvas.width+200){
+    segments.push({x,centerY,gap});
+    centerY+=(Math.random()-0.5)*40;
+    centerY=Math.max(80,Math.min(canvas.height-80,centerY));
+    gap+=(Math.random()-0.5)*20;
+    gap=Math.max(100,Math.min(180,gap));
+    x+=segmentWidth;
+  }
+}
+function extendSegments(){
+  const last=segments[segments.length-1];
+  let x=last.x+segmentWidth;
+  let centerY=last.centerY;
+  let gap=last.gap;
+  centerY+=(Math.random()-0.5)*40;
+  centerY=Math.max(80,Math.min(canvas.height-80,centerY));
+  gap+=(Math.random()-0.5)*20;
+  gap=Math.max(90,Math.min(180,gap));
+  segments.push({x,centerY,gap});
+}
+
+let last=0;
+function loop(ts){
+  if(!running)return;
+  const dt=(ts-last)/1000;
+  last=ts;
+  time+=dt;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function update(dt){
+  if(pressing)playerVy+=thrust*dt;
+  else playerVy+=gravity*dt;
+  playerY+=playerVy*dt*60;
+  playerY=Math.max(10,Math.min(canvas.height-10,playerY));
+
+  offsetX-=180*dt;
+
+  while(segments.length&&segments[0].x+offsetX+segmentWidth<-50)segments.shift();
+  while(segments.length&&segments[segments.length-1].x+offsetX<canvas.width+80)extendSegments();
+
+  const px=canvas.width*0.25;
+  const py=playerY;
+  const r=10;
+  for(const s of segments){
+    const sx=s.x+offsetX;
+    if(sx<=px&&sx+segmentWidth>=px){
+      const top=s.centerY-s.gap/2;
+      const bottom=s.centerY+s.gap/2;
+      if(py-r<top||py+r>bottom){
+        triggerDeath();
+      }
+      break;
+    }
+  }
+
+  score+=dt*20;
+
+  particles.forEach(p=>{
+    p.x+=p.vx*dt;
+    p.y+=p.vy*dt;
+    p.life-=dt;
+  });
+  particles=particles.filter(p=>p.life>0);
+
+  if(flashAlpha>0)flashAlpha=Math.max(0,flashAlpha-dt*2);
+}
+
+function drawBackground(){
+  const theme=worldThemes[world];
+  if(theme.mode==="3d"){
+    const g=ctx.createLinearGradient(0,0,0,canvas.height);
+    g.addColorStop(0,"#120008");
+    g.addColorStop(1,"#000000");
+    ctx.fillStyle=g;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    const tilt=(playerY-canvas.height/2)/canvas.height;
+    ctx.save();
+    ctx.translate(canvas.width/2,canvas.height/2+tilt*40);
+    const speed=220;
+    for(let i=0;i<14;i++){
+      const depth=(i/14);
+      const z=(time*speed*0.02+depth*4)%4;
+      const scale=1/(0.3+z);
+      const w=600*scale;
+      const h=300*scale;
+      ctx.strokeStyle=`rgba(255,80,80,${1-depth})`;
+      ctx.lineWidth=1.5*scale;
+      ctx.beginPath();
+      ctx.rect(-w/2,-h/2,w,h);
+      ctx.stroke();
+    }
+    ctx.strokeStyle="rgba(255,120,120,0.4)";
+    ctx.lineWidth=1;
+    for(let i=-4;i<=4;i++){
+      ctx.beginPath();
+      ctx.moveTo(-400,i*25);
+      ctx.lineTo(400,i*25);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }else{
+    const g=ctx.createLinearGradient(0,0,0,canvas.height);
+    g.addColorStop(0,"#02030a");
+    g.addColorStop(1,"#000000");
+    ctx.fillStyle=g;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+  }
+}
+
+function drawTunnel(){
+  const theme=worldThemes[world];
+  ctx.strokeStyle=theme.color;
+  ctx.lineWidth=4;
+  ctx.shadowColor=theme.color;
+  ctx.shadowBlur=14;
+
+  ctx.beginPath();
+  let startedTop=false,startedBottom=false;
+  for(const s of segments){
+    const sx=s.x+offsetX;
+    const top=s.centerY-s.gap/2;
+    if(!startedTop){ctx.moveTo(sx,top);startedTop=true;}
+    else ctx.lineTo(sx,top);
+  }
+  for(let i=segments.length-1;i>=0;i--){
+    const s=segments[i];
+    const sx=s.x+offsetX;
+    const bottom=s.centerY+s.gap/2;
+    if(!startedBottom){ctx.lineTo(sx,bottom);startedBottom=true;}
+    else ctx.lineTo(sx,bottom);
+  }
+  ctx.closePath();
+  ctx.stroke();
+}
+
+function drawPlayer(){
+  const skin=skinColors[selectedSkin];
+  const grad=ctx.createLinearGradient(0,playerY-10,0,playerY+10);
+  grad.addColorStop(0,skin[0]);
+  grad.addColorStop(1,skin[1]);
+  ctx.fillStyle=grad;
+  ctx.shadowColor=skin[0];
+  ctx.shadowBlur=18;
+  ctx.beginPath();
+  ctx.arc(canvas.width*0.25,playerY,10,0,Math.PI*2);
+  ctx.fill();
+}
+
+function drawParticles(){
+  ctx.shadowBlur=0;
+  particles.forEach(p=>{
+    ctx.fillStyle=p.color;
+    ctx.fillRect(p.x,p.y,p.size,p.size);
+  });
+}
+
+function drawHUD(){
+  ctx.shadowBlur=0;
+  ctx.fillStyle="#fff";
+  ctx.font="20px sans-serif";
+  ctx.fillText("Score: "+Math.floor(score),10,26);
+  ctx.fillText("World: "+worldThemes[world].name,10,48);
+  ctx.fillText("Coins: "+coins,10,70);
+}
+
+function drawFlash(){
+  if(flashAlpha>0){
+    ctx.fillStyle=`rgba(255,255,255,${flashAlpha})`;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+  }
+}
+
+function draw(){
+  drawBackground();
+  drawTunnel();
+  drawPlayer();
+  drawParticles();
+  drawHUD();
+  drawFlash();
+}
+
+function spawnExplosion(){
+  const cx=canvas.width*0.25;
+  const cy=playerY;
+  particles=[];
+  const count=24;
+  for(let i=0;i<count;i++){
+    const angle=Math.random()*Math.PI*2;
+    const speed=80+Math.random()*120;
+    particles.push({
+      x:cx,y:cy,
+      vx:Math.cos(angle)*speed,
+      vy:Math.sin(angle)*speed,
+      size:3+Math.random()*3,
+      life:0.4+Math.random()*0.4,
+      color:`hsl(${Math.random()*360},100%,60%)`
+    });
+  }
+}
+
+function triggerDeath(){
+  if(!running)return;
+  running=false;
+  spawnExplosion();
+  flashAlpha=0.7;
+  setTimeout(gameOver,350);
+}
+
+// --- Updated gameOver to use coin multiplier ---
+function gameOver(){
+  if(score>bestScore){
+    bestScore=Math.floor(score);
+    localStorage.setItem("bestScoreWalls",bestScore);
+  }
+  const multiplier = worldThemes[world]?.multiplier || 1;
+  const earned = Math.floor(score/100)*10 * multiplier;
+  coins += earned;
+  localStorage.setItem("coins",coins);
+  document.getElementById("finalScore").textContent = Math.floor(score);
+  document.getElementById("coinDisplay").textContent = coins + " (+" + earned + ")";
+  document.getElementById("menuCoins").textContent = coins;
+  document.getElementById("bestScoreMenu").textContent = bestScore;
+  document.getElementById("gameOverMenu").style.display = "flex";
+}
+
+// --- Updated shop to show cost and multiplier ---
+function openShop(){
+  document.getElementById("shop").style.display="flex";
+  document.getElementById("shopCoins").textContent=coins;
+  const list=document.getElementById("worldList");
+  list.innerHTML="";
+  worldThemes.forEach((w,i)=>{
+    const btn=document.createElement("div");
+    btn.className="worldBtn";
+    btn.textContent=w.name+" (x"+w.multiplier+" coins)";
+    if(i>world){
+      btn.classList.add("locked");
+      btn.textContent += " - " + w.cost + " coins";
+    }
+    btn.onclick=()=>{
+      if(i<=world){
+        world=i;
+        localStorage.setItem("world",world);
+        openShop();
+      }else if(coins>=w.cost){
+        coins-=w.cost;
+        world=i;
+        localStorage.setItem("coins",coins);
+        localStorage.setItem("world",world);
+        openShop();
+      }else{
+        alert("Not enough coins");
+      }
+    };
+    list.appendChild(btn);
+  });
+}
+
+function startGame(){
+  score=0;
+  time=0;
+  playerY=canvas.height/2;
+  playerVy=0;
+  offsetX=0;
+  particles=[];
+  flashAlpha=0;
+  generateInitialSegments();
+  running=true;
+  last=performance.now();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById("playBtn").onclick=()=>{
+  document.getElementById("menu").style.display="none";
+  startGame();
+};
+document.getElementById("retryBtn").onclick=()=>{
+  document.getElementById("gameOverMenu").style.display="none";
+  startGame();
+};
+document.getElementById("shopBtn").onclick=()=>{
+  document.getElementById("gameOverMenu").style.display="none";
+  openShop();
+};
+document.getElementById("backToMenuBtn").onclick=()=>{
+  document.getElementById("gameOverMenu").style.display="none";
+  document.getElementById("menu").style.display="flex";
+};
+document.getElementById("closeShopBtn").onclick=()=>{
+  document.getElementById("shop").style.display="none";
+  document.getElementById("menu").style.display="flex";
+};
+</script>
+</body>
+</html>
